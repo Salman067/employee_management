@@ -3,11 +3,16 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.response import Response
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
-from .models import User,Admin,Department,LeaveType
-from .serializers import UserSerializer,DepartmentSerializer,LeaveTypeSerializer
+from .models import User,Admin,Department,LeaveType,LeaveBalance,LeaveHistory,LeaveApplication
+from .serializers import (
+    UserSerializer,DepartmentSerializer,
+    LeaveTypeSerializer,LeaveApplicationSerializer,
+    LeaveHistorySerializer,LeaveBalanceSerializer)
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import update_session_auth_hash
+from django.db import transaction
+from django.utils import timezone
 
 
 # Department
@@ -32,7 +37,13 @@ def create_department(request):
 def updated_deleted_department(request,id):
     if request.user.user_type == 'admin':
         if request.method == 'PUT':
-            department = Department.objects.get(id=id)
+            try:
+              department = Department.objects.get(id=id)
+            except Department.DoesNotExist:
+              return Response(
+                  {"error": "Department not found."},
+                  status=status.HTTP_404_NOT_FOUND
+              )
             serializer = DepartmentSerializer(department, data=request.data)
             if serializer.is_valid():
                 serializer.save()
@@ -40,7 +51,14 @@ def updated_deleted_department(request,id):
             print(serializer.errors)
             return Response(serializer.errors)
         elif request.method == 'DELETE':
-            department = Department.objects.get(id=id)
+            try:
+              department = Department.objects.get(id=id)
+            except Department.DoesNotExist:
+              return Response(
+                  {"error": "Department not found."},
+                  status=status.HTTP_404_NOT_FOUND
+              )
+    
             department.delete()
             return Response({"message": "Department deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
     else:
@@ -277,3 +295,194 @@ def create_leave_type(request):
             {"error": "Only Admin or HR can create new leave type."},
             status=status.HTTP_403_FORBIDDEN 
         )
+
+
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_leave_type(request,id=None):
+    if id:
+         try:
+            leave_type = LeaveType.objects.get(id=id)
+            serializer = LeaveTypeSerializer(leave_type)
+            return Response(serializer.data)
+         except LeaveType.DoesNotExist:
+            return Response(
+                {"error": "Leave Type not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    else:
+         try:
+            leave_type = LeaveType.objects.all()
+            serializer = LeaveTypeSerializer(leave_type,many=True)
+            return Response(serializer.data)
+         except LeaveType.DoesNotExist:
+            return Response(
+                {"error": "Leave Type not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        
+        
+@api_view(["PUT",'DELETE'])
+@permission_classes([IsAuthenticated])   
+def updated_deleted_leave_type(request,id):
+    if request.user.user_type in ['hr', 'admin']:
+        if request.method == 'PUT':
+            try:
+               leave_type = LeaveType.objects.get(id=id)
+            except LeaveType.DoesNotExist:
+               return Response({"error": "Leave Type not found."}, status=status.HTTP_404_NOT_FOUND)
+         
+            serializer = LeaveTypeSerializer(leave_type, data=request.data)
+            if serializer.is_valid():
+                serializer.save()
+                return Response({"message":"Leave Type updated successfully"},status=status.HTTP_200_OK)
+            print(serializer.errors)
+            return Response(serializer.errors)
+        elif request.method == 'DELETE':
+            try:
+               leave_type = LeaveType.objects.get(id=id)
+            except LeaveType.DoesNotExist:
+                return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+            
+            leave_type.delete()
+            return Response({"message": "Leave Type deleted successfully."}, status=status.HTTP_204_NO_CONTENT)
+    else:
+        return Response(
+            {"error": "Only Admin can update or delete leave type."},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+
+@api_view(['POST'])
+def create_leave_application(request):
+    with transaction.atomic():  # Ensure atomicity
+        serializer = LeaveApplicationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        employee_id = request.data.get('employee')
+        leave_type_id = request.data.get('leave_type')
+        start_date = request.data.get('start_date')
+        end_date = request.data.get('end_date')
+        total_days = request.data.get('total_days')
+
+        # Calculate leave balance
+        leave_type = LeaveType.objects.get(id=leave_type_id)
+        leave_balance, created = LeaveBalance.objects.get_or_create(
+            user_id=employee_id,
+            leave_type=leave_type,
+            year=timezone.now().year,
+            defaults={'available_days': 0}
+        )
+
+        # Deduct the leave days from available balance
+        leave_balance.used_days += total_days
+        leave_balance.available_days=leave_type.max_days-leave_balance.used_days
+        # Check if sufficient leave balance is available
+        if leave_balance.available_days - leave_balance.used_days < total_days:
+            return Response({"error": "Insufficient leave balance."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        
+        # Save the leave application
+        leave_application = serializer.save()
+        leave_balance.save()
+
+        # Record history
+        LeaveHistory.objects.create(
+            application=leave_application,
+            action_by=request.user,
+            old_status=leave_application.status,
+            new_status=leave_application.status,
+            comments='Leave application created.'
+        )
+
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
+    
+    
+@api_view(['PUT'])
+def update_leave_application(request, id):
+    with transaction.atomic():
+        try:
+            leave_application = LeaveApplication.objects.get(id=id)
+        except LeaveApplication.DoesNotExist:
+            return Response({"error": "Leave application not found."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        old_status = leave_application.status  # Store old status
+        serializer = LeaveApplicationSerializer(leave_application, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        updated_application = serializer.save()
+
+        # If status has changed, create a history record
+        new_status = updated_application.status
+        if old_status != new_status:
+            LeaveHistory.objects.create(
+                application=leave_application,
+                action_by=request.user,
+                old_status=old_status,
+                new_status=new_status,
+                comments=request.data.get('comments', '')
+            )
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    
+    
+    
+@api_view(['GET'])
+def leave_application_history(request, id):
+    """Retrieve the history of status changes for a specific leave application."""
+    try:
+        leave_application = LeaveApplication.objects.get(id=id)
+    except LeaveApplication.DoesNotExist:
+        return Response({"error": "Leave application not found."},
+                        status=status.HTTP_404_NOT_FOUND)
+
+    history = LeaveHistory.objects.filter(application=leave_application)
+    serializer = LeaveHistorySerializer(history, many=True)
+    return Response(serializer.data)
+
+
+@api_view(['GET'])
+def leave_balance(request):
+    """Retrieve the current leave balance for an employee and leave type."""
+    try:
+        employee_id=request.GET.get('employee_id')
+        leave_type_id=request.GET.get('leave_type_id')
+        leave_balance = LeaveBalance.objects.get(
+            user_id=employee_id,
+            leave_type_id=leave_type_id,
+            year=timezone.now().year
+        )
+    except LeaveBalance.DoesNotExist:
+        return Response({"error": "Leave balance not found."},
+                        status=status.HTTP_404_NOT_FOUND)
+
+    serializer = LeaveBalanceSerializer(leave_balance)
+    return Response(serializer.data)
+
+
+# @api_view(['DELETE'])
+# def delete_leave_application(request, id):
+#     with transaction.atomic():
+#         try:
+#             leave_application = LeaveApplication.objects.get(id=id)
+#         except LeaveApplication.DoesNotExist:
+#             return Response({"error": "Leave application not found."},
+#                             status=status.HTTP_404_NOT_FOUND)
+
+#         # Add leave days back to the balance if the leave application was approved
+#         if leave_application.status == 'approved':
+#             leave_balance = LeaveBalance.objects.get(
+#                 user=leave_application.employee,
+#                 leave_type=leave_application.leave_type,
+#                 year=timezone.now().year
+#             )
+#             leave_balance.used_days -= leave_application.total_days
+#             leave_balance.save()
+
+#         leave_application.delete()
+#         return Response(status=status.HTTP_204_NO_CONTENT)

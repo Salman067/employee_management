@@ -29,9 +29,9 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'id', 'employee_id', 'username', 'first_name', 'last_name', 'email', 
+            'id', 'employee_id','full_name','designation', 'username','email', 
             'user_type', 'department','department_name', 'department_short_name', 
-            'is_active', 'date_joined', 'password','thumbnail'
+            'is_active', 'date_joined', 'password','thumbnail','phone_number'
         ]
         extra_kwargs = {'password': {'write_only': True}}
     
@@ -76,11 +76,38 @@ class LeaveApplicationSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class LeaveHistorySerializer(serializers.ModelSerializer):
+    action_by_name=serializers.SerializerMethodField()
     class Meta:
         model = LeaveHistory
-        fields = '__all__'
+        fields = ['id','action_timestamp','old_status','new_status','comments','application','action_by','action_by_name']
+        
+    def get_action_by_name(self, obj):
+        try:
+            action_by = obj.action_by
+            return action_by.full_name
+        except AttributeError:
+            return "No User Name" 
+        
+        
 
 class LeaveBalanceSerializer(serializers.ModelSerializer):
+    user_name = serializers.SerializerMethodField() 
+    leave_type = serializers.SerializerMethodField()
     class Meta:
         model = LeaveBalance
-        fields = '__all__'
+        fields = ['id','year','available_days','used_days','user_name','leave_type']
+        
+    
+    def get_user_name(self, obj):
+        try:
+            user = obj.user
+            return user.full_name
+        except AttributeError:
+            return "No User Name"  
+
+    def get_leave_type(self, obj):
+        try:
+            leave_type = obj.leave_type
+            return leave_type.leave_name
+        except AttributeError:
+            return "No Leave Type" 

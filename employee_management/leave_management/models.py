@@ -46,12 +46,14 @@ class User(AbstractUser):
         ('supervisor', 'Supervisor'),
         ('hr', 'HR')
     ]
-    full_name = models.CharField(max_length=100)
+    full_name = models.CharField(max_length=100,blank=False)
     department = models.ForeignKey(Department, on_delete=models.CASCADE)
     user_type = models.CharField(max_length=10, choices=USER_TYPES)
-    employee_id = models.CharField(max_length=255,unique=True,default='unknown') 
-    thumbnail=models.URLField()
-    
+    employee_id = models.CharField(max_length=255, unique=True, default='unknown') 
+    thumbnail = models.URLField()
+    designation = models.CharField(max_length=100, null=True)  
+    phone_number = models.CharField(max_length=15, null=True) 
+
     groups = models.ManyToManyField(
         Group,
         related_name="custom_user_groups", 
@@ -63,7 +65,9 @@ class User(AbstractUser):
         related_name="custom_user_permissions", 
         blank=True
     )
-    
+
+    def __str__(self):
+        return f"{self.full_name} ({self.user_type})"
     
 class LeaveType(models.Model):
     leave_name = models.CharField(max_length=50)
@@ -93,6 +97,16 @@ class LeaveApplication(models.Model):
     pdf_path = models.CharField(max_length=255, blank=True, null=True)
     status = models.CharField(max_length=25, choices=STATUS_CHOICES, default='pending_reliever')
     created_at = models.DateTimeField(auto_now_add=True)
+    designation = models.CharField(max_length=100, blank=True, null=True)
+    leave_address = models.TextField(blank=True, null=True)
+    contact_number = models.CharField(max_length=15, blank=True, null=True)
+    emergency_contact_number = models.CharField(max_length=15, blank=True, null=True)
+    reliever_name = models.CharField(max_length=100, blank=True, null=True)
+    
+    def __str__(self):
+        return f"{self.employee.full_name} - {self.leave_type} ({self.status})"
+    
+
 
 class LeaveHistory(models.Model):
     application = models.ForeignKey(LeaveApplication, related_name='history', on_delete=models.CASCADE)
