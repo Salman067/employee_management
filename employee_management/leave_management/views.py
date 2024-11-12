@@ -3,8 +3,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.response import Response
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
-from .models import User,Admin,Department
-from .serializers import UserSerializer,DepartmentSerializer
+from .models import User,Admin,Department,LeaveType
+from .serializers import UserSerializer,DepartmentSerializer,LeaveTypeSerializer
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import update_session_auth_hash
@@ -132,7 +132,7 @@ def get_by_user_id(request, id):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated]) 
 def register_user(request):
-    if request.user.user_type == 'hr' or request.user.user_type == 'admin':
+    if request.user.user_type in ['hr', 'admin']:
         serializer = UserSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
@@ -156,11 +156,16 @@ def login_user(request):
         user = User.objects.get(username=username)
         if user.check_password(password): 
             refresh = RefreshToken.for_user(user)
-            Response().set_cookie(key='accss_token', value=str(refresh.access_token),httponly=True)
-            return Response({
+            refresh['user_type'] = user.user_type  
+            refresh['username'] = user.username
+            refresh['email'] = user.email
+            
+            response = Response({
                 'refresh_token': str(refresh),
-                'accss_token': str(refresh.access_token),
+                'access_token': str(refresh.access_token),
             })
+            response.set_cookie(key='access_token', value=str(refresh.access_token), httponly=True)
+            return response
         else:
             return Response({"error": "Invalid username or password"}, status=400)
     except User.DoesNotExist:
@@ -257,3 +262,18 @@ def logout_user(request):
         return response
 
 
+# Leave Type
+@api_view(['POST'])
+@permission_classes([IsAuthenticated]) 
+def create_leave_type(request):
+    if request.user.user_type in ['hr', 'admin']:
+        serializer = LeaveTypeSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({"id":serializer.data.get('id'),"message":"Leave type create successfully"}, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    else:
+        return Response(
+            {"error": "Only Admin or HR can create new leave type."},
+            status=status.HTTP_403_FORBIDDEN 
+        )

@@ -19,5 +19,11 @@ urlpatterns = [
     path('department/view/<int:id>', views.get_department, name='view_department'),
     path('department/update/<int:id>', views.updated_deleted_department, name='updated_department'),
     path('department/delete/<int:id>', views.updated_deleted_department, name='deleted_department'),
-    # Additional CRUD endpoints for models can be added here
+    
+    # Leave Type
+    path('leave-type/create', views.create_leave_type, name='create_leave_type'),
+    # path('leave-type/list', views.get_leave_type, name='list_leave_type'),
+    # path('leave-type/view/<int:id>', views.get_leave_type, name='view_leave_type'),
+    # path('leave-type/update/<int:id>', views.updated_deleted_leave_type, name='updated_leave_type'),
+    # path('leave-type/delete/<int:id>', views.updated_deleted_leave_type, name='deleted_leave_type'),
 ]
